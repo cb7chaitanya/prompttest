@@ -27,5 +27,8 @@ prompttest = "prompttest.cli.main:app"
 [tool.hatch.build.targets.wheel]
 packages = ["src/prompttest"]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 [tool.ruff]
 line-length = 100
