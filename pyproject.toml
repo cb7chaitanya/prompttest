@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "prompttest"
+version = "0.1.0"
+description = "A testing framework for LLM prompts that detects regressions when prompts change."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = [
+    "typer>=0.9.0",
+    "pyyaml>=6.0",
+    "rich>=13.0",
+    "httpx>=0.25.0",
+]
+
+[project.optional-dependencies]
+openai = ["openai>=1.0"]
+anthropic = ["anthropic>=0.39.0"]
+dev = ["pytest>=7.0", "ruff>=0.4.0"]
+
+[project.scripts]
+prompttest = "prompttest.cli.main:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/prompttest"]
+
+[tool.ruff]
+line-length = 100
