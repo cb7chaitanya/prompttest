@@ -175,6 +175,40 @@ tests:
     assert result.accuracy == 0.5
 
 
+def test_run_eval_async_with_echo_provider(tmp_path: Path) -> None:
+    import asyncio
+
+    from prompttest.core.eval_runner import run_eval_async
+
+    dataset_yaml = """\
+prompt: test_prompt
+scoring: contains
+tests:
+  - input:
+      question: "What is your refund policy?"
+    expected: "refund policy"
+  - input:
+      question: "Do you offer support?"
+    expected: "NOPE_NOT_HERE"
+"""
+    dataset_file = tmp_path / "eval_dataset.yaml"
+    dataset_file.write_text(dataset_yaml)
+
+    prompt = PromptConfig(
+        name="test_prompt",
+        version="1",
+        model="echo",
+        provider="echo",
+        system="",
+        template="Answer: {{question}}",
+    )
+
+    result = asyncio.run(run_eval_async(dataset_file, prompt))
+    assert result.total == 2
+    assert result.passed == 1
+    assert result.failed == 1
+
+
 def test_eval_case_input_summary() -> None:
     from prompttest.core.eval_runner import EvalCase
 
