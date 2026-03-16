@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,7 @@ import yaml
 
 from prompttest.core.models import PromptConfig, Verdict
 from prompttest.core.scoring import DEFAULT_SCORER, PASS_THRESHOLD, get_scorer
+from prompttest.providers.base import LLMProvider
 from prompttest.providers.registry import get_provider
 
 
@@ -128,14 +130,32 @@ def load_eval_dataset(path: Path) -> EvalDataset:
 # Runner
 # ---------------------------------------------------------------------------
 
+def _score_case(
+    case: EvalCase,
+    output: str,
+    scorer: Any,
+) -> EvalCaseResult:
+    score, reason = scorer(output, case.expected)
+    verdict = Verdict.PASS if score >= PASS_THRESHOLD else Verdict.FAIL
+    return EvalCaseResult(case=case, output=output, verdict=verdict, score=score, reason=reason)
+
+
+def _error_case(case: EvalCase, exc: Exception) -> EvalCaseResult:
+    return EvalCaseResult(
+        case=case, output=str(exc), verdict=Verdict.ERROR, score=0.0,
+        reason=f"provider error: {exc}",
+    )
+
+
 def run_eval(
     dataset_path: Path,
     prompt_config: PromptConfig,
+    provider_override: LLMProvider | None = None,
 ) -> EvalResult:
     """Run an evaluation dataset against a prompt and return scored results."""
     dataset = load_eval_dataset(dataset_path)
     scorer = get_scorer(dataset.scoring)
-    provider = get_provider(prompt_config.provider)
+    provider = provider_override or get_provider(prompt_config.provider)
 
     case_results: list[EvalCaseResult] = []
     for case in dataset.tests:
@@ -147,27 +167,46 @@ def run_eval(
                 user_message=user_message,
                 parameters=prompt_config.parameters,
             )
-            score, reason = scorer(output, case.expected)
-            verdict = Verdict.PASS if score >= PASS_THRESHOLD else Verdict.FAIL
+            case_results.append(_score_case(case, output, scorer))
         except Exception as exc:
-            output = str(exc)
-            score = 0.0
-            reason = f"provider error: {exc}"
-            verdict = Verdict.ERROR
-
-        case_results.append(
-            EvalCaseResult(
-                case=case,
-                output=output,
-                verdict=verdict,
-                score=score,
-                reason=reason,
-            )
-        )
+            case_results.append(_error_case(case, exc))
 
     return EvalResult(
         prompt_name=prompt_config.name,
         prompt_version=prompt_config.version,
         scoring=dataset.scoring,
         case_results=case_results,
+    )
+
+
+async def run_eval_async(
+    dataset_path: Path,
+    prompt_config: PromptConfig,
+    provider_override: LLMProvider | None = None,
+) -> EvalResult:
+    """Async version of :func:`run_eval` — runs all cases concurrently."""
+    dataset = load_eval_dataset(dataset_path)
+    scorer = get_scorer(dataset.scoring)
+    provider = provider_override or get_provider(prompt_config.provider)
+
+    async def _run_one(case: EvalCase) -> EvalCaseResult:
+        user_message = render_template_dict(prompt_config.template, case.input)
+        try:
+            output = await provider.acomplete(
+                model=prompt_config.model,
+                system=prompt_config.system,
+                user_message=user_message,
+                parameters=prompt_config.parameters,
+            )
+            return _score_case(case, output, scorer)
+        except Exception as exc:
+            return _error_case(case, exc)
+
+    case_results = await asyncio.gather(*[_run_one(c) for c in dataset.tests])
+
+    return EvalResult(
+        prompt_name=prompt_config.name,
+        prompt_version=prompt_config.version,
+        scoring=dataset.scoring,
+        case_results=list(case_results),
     )
