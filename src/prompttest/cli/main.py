@@ -207,7 +207,7 @@ def show_prompt(
     ),
 ) -> None:
     """Show details of a specific prompt version."""
-    from prompttest.core.registry import PromptRegistry, parse_version
+    from prompttest.core.registry import PromptRegistry
 
     root = directory.resolve() / PROMPTTEST_DIR
     prompts_dir = root / "prompts"
@@ -281,6 +281,118 @@ def diff_prompts(
         console.print("[green]No differences found.[/green]")
     else:
         console.print(result)
+
+
+@app.command("eval")
+def eval_dataset(
+    dataset_file: Path = typer.Argument(help="Path to an evaluation dataset YAML file."),
+    directory: Path = typer.Option(
+        Path("."),
+        "--dir",
+        "-d",
+        help="Project root containing .prompttest/",
+    ),
+    scorer: str = typer.Option(
+        "",
+        "--scorer",
+        "-s",
+        help="Override the scoring function (e.g. exact, contains, starts_with, ends_with).",
+    ),
+) -> None:
+    """Run an evaluation dataset against its linked prompt."""
+    from prompttest.core.eval_runner import load_eval_dataset, run_eval
+    from prompttest.core.registry import PromptRegistry
+    from prompttest.core.scoring import list_scorers
+
+    dataset_path = dataset_file.resolve()
+    if not dataset_path.exists():
+        console.print(f"[red]Dataset file not found: {dataset_path}[/red]")
+        raise typer.Exit(1)
+
+    root = directory.resolve() / PROMPTTEST_DIR
+    prompts_dir = root / "prompts"
+    if not prompts_dir.exists():
+        console.print("[red]No prompts/ directory found. Run 'prompttest init' first.[/red]")
+        raise typer.Exit(1)
+
+    # Load dataset to resolve the prompt reference
+    ds = load_eval_dataset(dataset_path)
+
+    # Override scorer if provided via CLI
+    if scorer:
+        ds.scoring = scorer
+
+    # Resolve prompt from registry
+    registry = PromptRegistry.from_directory(prompts_dir)
+    name, version = _parse_prompt_identifier(ds.prompt)
+    entry = registry.get(name, version)
+    if entry is None:
+        console.print(f"[red]Prompt '{ds.prompt}' not found in registry.[/red]")
+        available = registry.names
+        if available:
+            console.print(f"Available: {', '.join(available)}")
+        raise typer.Exit(1)
+
+    console.print(
+        f"[bold]Evaluating[/bold] prompt [cyan]{entry.config.name}[/cyan] "
+        f"[green]v{entry.config.version}[/green] "
+        f"with scorer [yellow]{ds.scoring}[/yellow]\n"
+    )
+
+    try:
+        result = run_eval(dataset_path, entry.config)
+    except KeyError as exc:
+        console.print(f"[red]{exc}[/red]")
+        console.print(f"Available scorers: {', '.join(list_scorers())}")
+        raise typer.Exit(1)
+    except Exception as exc:
+        console.print(f"[red]Error: {exc}[/red]")
+        raise typer.Exit(1)
+
+    _print_eval_result(result)
+
+    if result.failed > 0 or result.errors > 0:
+        raise typer.Exit(1)
+
+
+def _print_eval_result(result: object) -> None:
+    """Pretty-print evaluation results."""
+    table = Table(
+        title=f"Eval: {result.prompt_name} v{result.prompt_version}",
+        show_lines=True,
+    )
+    table.add_column("#", style="dim", justify="right")
+    table.add_column("Input", style="cyan", max_width=40)
+    table.add_column("Expected", style="yellow", max_width=25)
+    table.add_column("Output", style="white", max_width=40)
+    table.add_column("Verdict", justify="center")
+    table.add_column("Reason", style="dim", max_width=30)
+
+    for i, cr in enumerate(result.case_results, 1):
+        verdict_style = {
+            "pass": "[green]PASS[/green]",
+            "fail": "[red]FAIL[/red]",
+            "error": "[red bold]ERROR[/red bold]",
+        }[cr.verdict.value]
+
+        table.add_row(
+            str(i),
+            cr.case.input_summary[:80],
+            cr.case.expected,
+            cr.output[:80],
+            verdict_style,
+            cr.reason,
+        )
+
+    console.print(table)
+    console.print()
+    console.print("[bold]Test Results[/bold]")
+    console.print(f"  Total:    {result.total}")
+    console.print(f"  Passed:   [green]{result.passed}[/green]")
+    console.print(f"  Failed:   [red]{result.failed}[/red]")
+    if result.errors:
+        console.print(f"  Errors:   [red bold]{result.errors}[/red bold]")
+    console.print(f"  Accuracy: {result.accuracy:.0%}")
 
 
 def _parse_prompt_identifier(identifier: str) -> tuple[str, str | None]:
