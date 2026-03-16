@@ -1,0 +1,305 @@
+"""CLI entrypoint."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import typer
+from rich.console import Console
+from rich.table import Table
+
+from prompttest.core.loader import PROMPTTEST_DIR
+
+app = typer.Typer(
+    name="prompttest",
+    help="A testing framework for LLM prompts.",
+    no_args_is_help=True,
+)
+console = Console()
+
+EXAMPLE_PROMPT = """\
+name: summarize
+version: "1"
+provider: echo
+model: gpt-4o-mini
+system: You are a concise summarizer.
+template: "Summarize the following text:\\n\\n{{input}}"
+parameters:
+  temperature: 0.3
+"""
+
+EXAMPLE_PROMPT_V2 = """\
+name: summarize
+version: "2"
+provider: echo
+model: gpt-4o-mini
+system: You are a concise summarizer. Be brief and precise.
+template: "Provide a one-sentence summary of:\\n\\n{{input}}"
+parameters:
+  temperature: 0.2
+"""
+
+EXAMPLE_DATASET = """\
+name: summarize-basics
+prompt: summarize
+cases:
+  - input: "The quick brown fox jumps over the lazy dog. The dog did not react."
+    expected: "fox"
+    tags: [smoke]
+  - input: "Python is a popular programming language created by Guido van Rossum."
+    expected: "Python"
+    tags: [smoke]
+"""
+
+
+@app.command()
+def init(
+    directory: Path = typer.Argument(
+        Path("."),
+        help="Directory to initialize the project in.",
+    ),
+) -> None:
+    """Initialize a new prompttest project with example files."""
+    root = directory.resolve() / PROMPTTEST_DIR
+    prompts_dir = root / "prompts"
+    datasets_dir = root / "datasets"
+    results_dir = root / "results"
+
+    for d in [prompts_dir, datasets_dir, results_dir]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    prompt_file = prompts_dir / "summarize.yaml"
+    if not prompt_file.exists():
+        prompt_file.write_text(EXAMPLE_PROMPT)
+
+    prompt_v2_file = prompts_dir / "summarize_v2.yaml"
+    if not prompt_v2_file.exists():
+        prompt_v2_file.write_text(EXAMPLE_PROMPT_V2)
+
+    dataset_file = datasets_dir / "summarize-basics.yaml"
+    if not dataset_file.exists():
+        dataset_file.write_text(EXAMPLE_DATASET)
+
+    console.print(f"[green]Initialized prompttest project in {root}[/green]")
+    console.print(f"  prompts/   → {prompts_dir}")
+    console.print(f"  datasets/  → {datasets_dir}")
+    console.print(f"  results/   → {results_dir}")
+    console.print("\nRun [bold]prompttest run[/bold] to execute tests.")
+
+
+@app.command()
+def run(
+    directory: Path = typer.Option(
+        Path("."),
+        "--dir",
+        "-d",
+        help="Project root containing .prompttest/",
+    ),
+) -> None:
+    """Run all datasets against their linked prompts."""
+    from prompttest.core.runner import run_all
+
+    root = directory.resolve() / PROMPTTEST_DIR
+    if not root.exists():
+        console.print("[red]No .prompttest/ directory found. Run 'prompttest init' first.[/red]")
+        raise typer.Exit(1)
+
+    console.print("[bold]Running prompt tests...[/bold]\n")
+    try:
+        run_results = run_all(root)
+    except Exception as exc:
+        console.print(f"[red]Error: {exc}[/red]")
+        raise typer.Exit(1)
+
+    any_failure = False
+    for rr in run_results:
+        table = Table(
+            title=f"{rr.prompt_name} v{rr.prompt_version} — {rr.dataset_name}",
+            show_lines=True,
+        )
+        table.add_column("Input", style="cyan", max_width=40)
+        table.add_column("Expected", style="yellow", max_width=30)
+        table.add_column("Output", style="white", max_width=40)
+        table.add_column("Verdict", justify="center")
+        table.add_column("Reason", style="dim", max_width=30)
+
+        for cr in rr.results:
+            verdict_style = {
+                "pass": "[green]PASS[/green]",
+                "fail": "[red]FAIL[/red]",
+                "error": "[red bold]ERROR[/red bold]",
+            }[cr.verdict.value]
+
+            table.add_row(
+                cr.case.input[:80],
+                cr.case.expected,
+                cr.output[:80],
+                verdict_style,
+                cr.reason,
+            )
+
+        console.print(table)
+        console.print(
+            f"  Results: [green]{rr.passed} passed[/green], "
+            f"[red]{rr.failed} failed[/red], "
+            f"{rr.total} total — "
+            f"pass rate: {rr.pass_rate:.0%}\n"
+        )
+        if rr.failed > 0:
+            any_failure = True
+
+    if any_failure:
+        raise typer.Exit(1)
+
+
+@app.command("list-prompts")
+def list_prompts(
+    directory: Path = typer.Option(
+        Path("."),
+        "--dir",
+        "-d",
+        help="Project root containing .prompttest/",
+    ),
+) -> None:
+    """List all registered prompts and their versions."""
+    from prompttest.core.registry import PromptRegistry
+
+    root = directory.resolve() / PROMPTTEST_DIR
+    prompts_dir = root / "prompts"
+    if not prompts_dir.exists():
+        console.print("[red]No prompts/ directory found. Run 'prompttest init' first.[/red]")
+        raise typer.Exit(1)
+
+    registry = PromptRegistry.from_directory(prompts_dir)
+    if not registry.names:
+        console.print("[yellow]No prompts found.[/yellow]")
+        raise typer.Exit(0)
+
+    table = Table(title="Registered Prompts")
+    table.add_column("Name", style="cyan")
+    table.add_column("Version", style="green")
+    table.add_column("Provider", style="yellow")
+    table.add_column("Model", style="white")
+    table.add_column("File", style="dim")
+
+    for entry in registry.all_entries():
+        table.add_row(
+            entry.config.name,
+            entry.config.version,
+            entry.config.provider,
+            entry.config.model,
+            entry.path.name,
+        )
+
+    console.print(table)
+
+
+@app.command("show-prompt")
+def show_prompt(
+    identifier: str = typer.Argument(
+        help="Prompt identifier: 'name' (latest version) or 'name_vN'.",
+    ),
+    directory: Path = typer.Option(
+        Path("."),
+        "--dir",
+        "-d",
+        help="Project root containing .prompttest/",
+    ),
+) -> None:
+    """Show details of a specific prompt version."""
+    from prompttest.core.registry import PromptRegistry, parse_version
+
+    root = directory.resolve() / PROMPTTEST_DIR
+    prompts_dir = root / "prompts"
+    if not prompts_dir.exists():
+        console.print("[red]No prompts/ directory found. Run 'prompttest init' first.[/red]")
+        raise typer.Exit(1)
+
+    registry = PromptRegistry.from_directory(prompts_dir)
+
+    # Parse identifier: support_v1 → name=support, version=v1
+    name, version = _parse_prompt_identifier(identifier)
+
+    entry = registry.get(name, version)
+    if entry is None:
+        console.print(f"[red]Prompt '{identifier}' not found.[/red]")
+        available = registry.names
+        if available:
+            console.print(f"Available prompts: {', '.join(available)}")
+        raise typer.Exit(1)
+
+    cfg = entry.config
+    console.print(f"[bold cyan]{cfg.name}[/bold cyan] [green]v{cfg.version}[/green]")
+    console.print(f"  Provider: {cfg.provider}")
+    console.print(f"  Model:    {cfg.model}")
+    console.print(f"  File:     {entry.path}")
+    if cfg.parameters:
+        console.print(f"  Params:   {cfg.parameters}")
+    console.print()
+    console.print("[bold]System prompt:[/bold]")
+    console.print(f"  {cfg.system}" if cfg.system else "  [dim](empty)[/dim]")
+    console.print()
+    console.print("[bold]User template:[/bold]")
+    console.print(f"  {cfg.template}")
+
+    # Show available versions for this prompt
+    versions = registry.versions(cfg.name)
+    if len(versions) > 1:
+        console.print()
+        console.print(f"[dim]Other versions: {', '.join(v for v in versions if v != cfg.version)}[/dim]")
+
+
+@app.command("diff-prompts")
+def diff_prompts(
+    name: str = typer.Argument(help="Prompt name."),
+    version_a: str = typer.Argument(help="First version (e.g. v1)."),
+    version_b: str = typer.Argument(help="Second version (e.g. v2)."),
+    directory: Path = typer.Option(
+        Path("."),
+        "--dir",
+        "-d",
+        help="Project root containing .prompttest/",
+    ),
+) -> None:
+    """Show a diff between two versions of a prompt."""
+    from prompttest.core.registry import PromptRegistry
+
+    root = directory.resolve() / PROMPTTEST_DIR
+    prompts_dir = root / "prompts"
+    if not prompts_dir.exists():
+        console.print("[red]No prompts/ directory found. Run 'prompttest init' first.[/red]")
+        raise typer.Exit(1)
+
+    registry = PromptRegistry.from_directory(prompts_dir)
+    try:
+        result = registry.diff(name, version_a, version_b)
+    except KeyError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1)
+
+    if not result:
+        console.print("[green]No differences found.[/green]")
+    else:
+        console.print(result)
+
+
+def _parse_prompt_identifier(identifier: str) -> tuple[str, str | None]:
+    """Parse 'name_vN' into (name, 'vN') or plain 'name' into (name, None).
+
+    Examples:
+        'support_v1'   → ('support', 'v1')
+        'support_v2.1' → ('support', 'v2.1')
+        'support'      → ('support', None)
+        'my_bot_v3'    → ('my_bot', 'v3')
+    """
+    # Try to split on the last '_v' occurrence
+    idx = identifier.rfind("_v")
+    if idx > 0:
+        name = identifier[:idx]
+        version = identifier[idx + 1:]  # keeps the 'v' prefix
+        return name, version
+    return identifier, None
+
+
+if __name__ == "__main__":
+    app()
