@@ -292,17 +292,35 @@ def eval_dataset(
         "-d",
         help="Project root containing .prompttest/",
     ),
+    model: str = typer.Option(
+        "",
+        "--model",
+        "-m",
+        help="Override model (e.g. gpt-4o, claude-3-haiku-20240307). Auto-detects provider.",
+    ),
+    provider: str = typer.Option(
+        "",
+        "--provider",
+        "-p",
+        help="Override provider (openai, anthropic, local, echo).",
+    ),
     scorer: str = typer.Option(
         "",
         "--scorer",
         "-s",
         help="Override the scoring function (e.g. exact, contains, starts_with, ends_with).",
     ),
+    use_async: bool = typer.Option(
+        False,
+        "--async",
+        help="Run evaluation cases concurrently.",
+    ),
 ) -> None:
     """Run an evaluation dataset against its linked prompt."""
-    from prompttest.core.eval_runner import load_eval_dataset, run_eval
+    from prompttest.core.eval_runner import load_eval_dataset, run_eval, run_eval_async
     from prompttest.core.registry import PromptRegistry
     from prompttest.core.scoring import list_scorers
+    from prompttest.providers.registry import get_provider as get_prov, resolve_model
 
     dataset_path = dataset_file.resolve()
     if not dataset_path.exists():
@@ -333,14 +351,42 @@ def eval_dataset(
             console.print(f"Available: {', '.join(available)}")
         raise typer.Exit(1)
 
+    # Apply model/provider overrides to a copy of the prompt config
+    from dataclasses import replace
+    cfg = entry.config
+
+    provider_override = None
+    if model:
+        # Auto-detect provider from model name unless --provider is explicit
+        if not provider:
+            try:
+                detected_provider, model_id = resolve_model(model)
+            except ValueError as exc:
+                console.print(f"[red]{exc}[/red]")
+                raise typer.Exit(1)
+            cfg = replace(cfg, model=model_id, provider=detected_provider)
+        else:
+            cfg = replace(cfg, model=model, provider=provider)
+    elif provider:
+        cfg = replace(cfg, provider=provider)
+
+    if provider or model:
+        provider_override = get_prov(cfg.provider)
+
     console.print(
-        f"[bold]Evaluating[/bold] prompt [cyan]{entry.config.name}[/cyan] "
-        f"[green]v{entry.config.version}[/green] "
-        f"with scorer [yellow]{ds.scoring}[/yellow]\n"
+        f"[bold]Evaluating[/bold] prompt [cyan]{cfg.name}[/cyan] "
+        f"[green]v{cfg.version}[/green] "
+        f"| model [white]{cfg.model}[/white] "
+        f"| provider [yellow]{cfg.provider}[/yellow] "
+        f"| scorer [yellow]{ds.scoring}[/yellow]\n"
     )
 
     try:
-        result = run_eval(dataset_path, entry.config)
+        if use_async:
+            import asyncio
+            result = asyncio.run(run_eval_async(dataset_path, cfg, provider_override))
+        else:
+            result = run_eval(dataset_path, cfg, provider_override)
     except KeyError as exc:
         console.print(f"[red]{exc}[/red]")
         console.print(f"Available scorers: {', '.join(list_scorers())}")
