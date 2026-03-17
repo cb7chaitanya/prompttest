@@ -214,15 +214,17 @@ jobs:
           python-version: "3.12"
 
       - name: Install prompttest
-        run: pip install -e ".[openai,dev]"
+        run: pip install -e ".[dev]"
+
+      - name: Initialize project
+        run: prompttest init
 
       - name: Run prompt evaluation
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           prompttest eval .prompttest/datasets/summarize-basics.yaml \
             --pass-threshold 0.7 \
             --fail-on-threshold \
+            --skip-key-check \
             --output results.json
 
       - name: Upload results
@@ -232,6 +234,8 @@ jobs:
           name: eval-results
           path: results.json
 ```
+
+> **Note:** The example above uses the built-in `echo` provider (created by `prompttest init`) which needs no API key. For real LLM evaluation, install the provider extra (`pip install -e ".[openai,dev]"`), set the API key secret, and remove `--skip-key-check`.
 
 ### Tips for CI
 
