@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from prompttest.core.evaluator import evaluate_case
 from prompttest.core.loader import discover_datasets, find_prompt_by_name
-from prompttest.core.models import CaseResult, RunResult, Verdict
+from prompttest.core.models import CaseResult, RunResult, TestCase, Verdict
+from prompttest.core.scoring import PASS_THRESHOLD, contains
 from prompttest.providers.registry import get_provider
 
 
@@ -34,7 +34,12 @@ def run_all(root: Path | None = None) -> list[RunResult]:
                     user_message=user_message,
                     parameters=prompt.parameters,
                 )
-                result = evaluate_case(case, output)
+                score, reason = contains(output, case.expected)
+                verdict = Verdict.PASS if score >= PASS_THRESHOLD else Verdict.FAIL
+                result = CaseResult(
+                    case=case, output=output, verdict=verdict,
+                    score=score, reason=reason,
+                )
             except Exception as exc:
                 result = CaseResult(
                     case=case,
