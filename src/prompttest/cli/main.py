@@ -320,6 +320,26 @@ def eval_dataset(
         "--strict/--no-strict",
         help="Strict validation: fail on missing placeholders (default: strict).",
     ),
+    max_concurrency: int = typer.Option(
+        10,
+        "--max-concurrency",
+        "-c",
+        help="Maximum number of concurrent requests (async mode only).",
+        min=1,
+    ),
+    rate_limit: float = typer.Option(
+        0.0,
+        "--rate-limit",
+        "-r",
+        help="Maximum requests per second (0 = unlimited).",
+        min=0.0,
+    ),
+    max_retries: int = typer.Option(
+        3,
+        "--max-retries",
+        help="Maximum retry attempts on transient/rate-limit errors.",
+        min=0,
+    ),
 ) -> None:
     """Run an evaluation dataset against its linked prompt."""
     from prompttest.core.eval_runner import load_eval_dataset, run_eval, run_eval_async
@@ -398,18 +418,57 @@ def eval_dataset(
         else:
             console.print("[yellow]Continuing with --no-strict mode...[/yellow]\n")
 
-    console.print(
+    eval_header = (
         f"[bold]Evaluating[/bold] prompt [cyan]{cfg.name}[/cyan] "
         f"[green]v{cfg.version}[/green] "
         f"| model [white]{cfg.model}[/white] "
         f"| provider [yellow]{cfg.provider}[/yellow] "
-        f"| scorer [yellow]{ds.scoring}[/yellow]\n"
+        f"| scorer [yellow]{ds.scoring}[/yellow]"
     )
+    if use_async:
+        eval_header += (
+            f"\n  concurrency [white]{max_concurrency}[/white]"
+            f" | rate limit [white]{'unlimited' if rate_limit <= 0 else f'{rate_limit}/s'}[/white]"
+            f" | retries [white]{max_retries}[/white]"
+        )
+    console.print(eval_header + "\n")
 
     try:
         if use_async:
             import asyncio
-            result = asyncio.run(run_eval_async(dataset_path, cfg, provider_override, strict=False))
+            from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn
+            from prompttest.core.concurrency import ConcurrencyConfig
+
+            cc = ConcurrencyConfig(
+                max_concurrency=max_concurrency,
+                rate_limit=rate_limit,
+                max_retries=max_retries,
+            )
+
+            total_cases = len(ds.tests)
+
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TextColumn("{task.completed}/{task.total}"),
+                console=console,
+            ) as progress:
+                task_id = progress.add_task("Evaluating", total=total_cases)
+
+                def _advance() -> None:
+                    progress.advance(task_id)
+
+                result = asyncio.run(
+                    run_eval_async(
+                        dataset_path,
+                        cfg,
+                        provider_override,
+                        strict=False,
+                        concurrency_config=cc,
+                        on_case_complete=_advance,
+                    )
+                )
         else:
             result = run_eval(dataset_path, cfg, provider_override, strict=False)
     except KeyError as exc:

@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from prompttest.core.concurrency import ConcurrencyConfig, RateLimiter, run_with_retry
 from prompttest.core.models import PromptConfig, Verdict
 from prompttest.core.scoring import DEFAULT_SCORER, PASS_THRESHOLD, get_scorer
 from prompttest.providers.base import LLMProvider
@@ -200,8 +202,17 @@ async def run_eval_async(
     provider_override: LLMProvider | None = None,
     *,
     strict: bool = True,
+    concurrency_config: ConcurrencyConfig | None = None,
+    on_case_complete: Callable[[], None] | None = None,
 ) -> EvalResult:
-    """Async version of :func:`run_eval` — runs all cases concurrently."""
+    """Async version of :func:`run_eval` — runs cases with concurrency control.
+
+    *concurrency_config* controls parallelism, rate limiting, and retries.
+    When ``None`` a default config is used (10 concurrent, no rate limit,
+    3 retries).
+
+    *on_case_complete* is called after each case finishes (for progress bars).
+    """
     from prompttest.validation.prompt_validator import validate_dataset
 
     dataset = load_eval_dataset(dataset_path)
@@ -213,10 +224,11 @@ async def run_eval_async(
 
     scorer = get_scorer(dataset.scoring)
     provider = provider_override or get_provider(prompt_config.provider)
+    cfg = concurrency_config or ConcurrencyConfig()
 
-    async def _run_one(case: EvalCase) -> EvalCaseResult:
-        user_message = render_template_dict(prompt_config.template, case.input)
-        try:
+    def _make_task(case: EvalCase) -> Callable[[], Awaitable[EvalCaseResult]]:
+        async def _run() -> EvalCaseResult:
+            user_message = render_template_dict(prompt_config.template, case.input)
             output = await provider.acomplete(
                 model=prompt_config.model,
                 system=prompt_config.system,
@@ -224,10 +236,32 @@ async def run_eval_async(
                 parameters=prompt_config.parameters,
             )
             return _score_case(case, output, scorer)
-        except Exception as exc:
-            return _error_case(case, exc)
+        return _run
 
-    case_results = await asyncio.gather(*[_run_one(c) for c in dataset.tests])
+    # Run with concurrency control; catch per-task errors as ERROR verdicts
+    semaphore = asyncio.Semaphore(cfg.max_concurrency)
+    limiter = RateLimiter(cfg.rate_limit)
+
+    async def _guarded(case: EvalCase, fn: Callable[[], Awaitable[EvalCaseResult]]) -> EvalCaseResult:
+        async with semaphore:
+            await limiter.acquire()
+            try:
+                result = await run_with_retry(
+                    fn,
+                    max_retries=cfg.max_retries,
+                    base_delay=cfg.base_delay,
+                    max_delay=cfg.max_delay,
+                )
+                return result
+            except Exception as exc:
+                return _error_case(case, exc)
+            finally:
+                if on_case_complete is not None:
+                    on_case_complete()
+
+    case_results = await asyncio.gather(
+        *[_guarded(case, _make_task(case)) for case in dataset.tests]
+    )
 
     return EvalResult(
         prompt_name=prompt_config.name,
