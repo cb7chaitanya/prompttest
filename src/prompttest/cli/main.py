@@ -485,6 +485,114 @@ def history(
     console.print(f"  Entries: {len(entries)} total, showing last {len(shown)}")
 
 
+@app.command("watch")
+def watch(
+    directory: Path = typer.Option(
+        Path("."),
+        "--dir",
+        "-d",
+        help="Project root containing .prompttest/",
+    ),
+    interval: float = typer.Option(
+        1.0,
+        "--interval",
+        help="Seconds between file system polls.",
+    ),
+    debounce: float = typer.Option(
+        0.5,
+        "--debounce",
+        help="Seconds to wait after a change before re-running (coalesces rapid saves).",
+    ),
+) -> None:
+    """Watch prompts/ and datasets/ for changes and re-run evaluations."""
+    from prompttest.core.runner import run_all
+    from prompttest.core.watcher import watch_loop
+
+    root = directory.resolve() / PROMPTTEST_DIR
+    if not root.exists():
+        console.print("[red]No .prompttest/ directory found. Run 'prompttest init' first.[/red]")
+        raise typer.Exit(1)
+
+    prompts_dir = root / "prompts"
+    datasets_dir = root / "datasets"
+
+    last_summary: dict[str, tuple[int, int]] = {}  # dataset_name -> (passed, total)
+
+    def _on_change(changed: list) -> None:
+        nonlocal last_summary
+        changed_names = [p.name for p in changed if hasattr(p, "name")]
+        console.print(
+            f"\n[yellow]Change detected:[/yellow] {', '.join(changed_names)}"
+        )
+        console.print("[bold]Re-running evaluations...[/bold]\n")
+
+        try:
+            results = run_all(root)
+        except Exception as exc:
+            console.print(f"[red]Error: {exc}[/red]")
+            return
+
+        current_summary: dict[str, tuple[int, int]] = {}
+        for rr in results:
+            key = f"{rr.prompt_name} v{rr.prompt_version} — {rr.dataset_name}"
+            current_summary[key] = (rr.passed, rr.total)
+
+            # Show diff vs last run
+            prev = last_summary.get(key)
+            if prev is not None:
+                prev_passed, prev_total = prev
+                delta = rr.passed - prev_passed
+                if delta > 0:
+                    status = f"[green]+{delta} passing[/green]"
+                elif delta < 0:
+                    status = f"[red]{delta} passing[/red]"
+                else:
+                    status = "[dim]no change[/dim]"
+                console.print(
+                    f"  {key}: "
+                    f"[green]{rr.passed}[/green]/[white]{rr.total}[/white] "
+                    f"({status})"
+                )
+            else:
+                console.print(
+                    f"  {key}: "
+                    f"[green]{rr.passed}[/green]/[white]{rr.total}[/white] "
+                    f"pass rate: {rr.pass_rate:.0%}"
+                )
+
+        last_summary = current_summary
+        console.print("\n[dim]Watching for changes... (Ctrl+C to stop)[/dim]")
+
+    # Initial run
+    console.print("[bold]Running initial evaluation...[/bold]\n")
+    try:
+        results = run_all(root)
+    except Exception as exc:
+        console.print(f"[red]Error: {exc}[/red]")
+        raise typer.Exit(1)
+
+    for rr in results:
+        key = f"{rr.prompt_name} v{rr.prompt_version} — {rr.dataset_name}"
+        last_summary[key] = (rr.passed, rr.total)
+        console.print(
+            f"  {key}: "
+            f"[green]{rr.passed}[/green]/[white]{rr.total}[/white] "
+            f"pass rate: {rr.pass_rate:.0%}"
+        )
+
+    console.print("\n[dim]Watching for changes... (Ctrl+C to stop)[/dim]")
+
+    try:
+        watch_loop(
+            [prompts_dir, datasets_dir],
+            _on_change,
+            interval=interval,
+            debounce=debounce,
+        )
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Watch stopped.[/yellow]")
+
+
 @app.command("eval-pipeline")
 def eval_pipeline(
     dataset_file: Path = typer.Argument(help="Path to an evaluation dataset YAML file."),
