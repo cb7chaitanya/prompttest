@@ -371,6 +371,113 @@ def history(
     console.print(f"  Entries: {len(entries)} total, showing last {len(shown)}")
 
 
+@app.command("eval-pipeline")
+def eval_pipeline(
+    dataset_file: Path = typer.Argument(help="Path to an evaluation dataset YAML file."),
+    endpoint: str = typer.Option(
+        "",
+        "--endpoint",
+        "-e",
+        help="HTTP endpoint URL to POST inputs to.",
+    ),
+    response_key: str = typer.Option(
+        "output",
+        "--response-key",
+        help="JSON key in the endpoint response that contains the output text.",
+    ),
+    scorer: str = typer.Option(
+        "",
+        "--scorer",
+        "-s",
+        help="Scoring function (e.g. exact, contains, fuzzy).",
+    ),
+    pass_threshold: float = typer.Option(
+        0.7,
+        "--pass-threshold",
+        "-t",
+        help="Minimum score for a test case to pass (0.0-1.0).",
+        min=0.0,
+        max=1.0,
+    ),
+    tags: str = typer.Option(
+        "",
+        "--tags",
+        help="Comma-separated tags to filter test cases.",
+    ),
+    match: str = typer.Option(
+        "any",
+        "--match",
+        help="Tag matching mode: 'any' or 'all'.",
+    ),
+    output: Path = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Save results to a file (e.g. results.json).",
+    ),
+    pipeline_name: str = typer.Option(
+        "",
+        "--name",
+        help="Name for this pipeline target (defaults to endpoint URL).",
+    ),
+) -> None:
+    """Evaluate an HTTP endpoint or pipeline against a dataset."""
+    from prompttest.core.eval_runner import load_eval_dataset, filter_by_tags
+    from prompttest.pipeline.runner import evaluate
+    from prompttest.pipeline.targets import HttpTarget
+
+    if not endpoint:
+        console.print("[red]--endpoint is required for eval-pipeline.[/red]")
+        raise typer.Exit(1)
+
+    dataset_path = dataset_file.resolve()
+    if not dataset_path.exists():
+        console.print(f"[red]Dataset file not found: {dataset_path}[/red]")
+        raise typer.Exit(1)
+
+    target = HttpTarget(
+        endpoint,
+        response_key=response_key,
+        name=pipeline_name or endpoint,
+    )
+
+    tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
+
+    console.print(
+        f"[bold]Evaluating pipeline[/bold] [cyan]{target.name}[/cyan]\n"
+        f"  endpoint [white]{endpoint}[/white]"
+        f" | scorer [yellow]{scorer or 'default'}[/yellow]"
+        f" | threshold [white]{pass_threshold}[/white]\n"
+    )
+
+    result = evaluate(
+        target,
+        dataset_path,
+        scorer_name=scorer,
+        pass_threshold=pass_threshold,
+        tags=tag_list or None,
+        tag_match=match,
+    )
+
+    _print_eval_result(result)
+
+    if output is not None:
+        from prompttest.core.exporter import save_result
+        from prompttest.core.models import PromptConfig
+
+        pseudo_config = PromptConfig(
+            name=target.name, version=target.version,
+            model="pipeline", provider="http",
+            system="", template="",
+        )
+        fmt = output.suffix.lstrip(".") or "json"
+        saved_path = save_result(result, pseudo_config, output, fmt)
+        console.print(f"\n[green]Results saved to {saved_path}[/green]")
+
+    if result.failed > 0 or result.errors > 0:
+        raise typer.Exit(1)
+
+
 @app.command("eval")
 def eval_dataset(
     dataset_file: Path = typer.Argument(help="Path to an evaluation dataset YAML file."),
