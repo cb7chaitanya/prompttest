@@ -260,6 +260,12 @@ def diff_prompts(
         "-d",
         help="Project root containing .prompttest/",
     ),
+    output: Path = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Save diff to a file (JSON).",
+    ),
 ) -> None:
     """Show a diff between two versions of a prompt."""
     from prompttest.core.registry import PromptRegistry
@@ -281,6 +287,14 @@ def diff_prompts(
         console.print("[green]No differences found.[/green]")
     else:
         console.print(result)
+
+    if output is not None:
+        from prompttest.core.exporter import export_diff_json
+
+        content = export_diff_json(result, name, version_a, version_b)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(content)
+        console.print(f"\n[green]Diff saved to {output.resolve()}[/green]")
 
 
 @app.command("eval")
@@ -339,6 +353,23 @@ def eval_dataset(
         "--max-retries",
         help="Maximum retry attempts on transient/rate-limit errors.",
         min=0,
+    ),
+    output: Path = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Save results to a file (e.g. results.json or results.csv).",
+    ),
+    output_format: str = typer.Option(
+        "",
+        "--format",
+        "-f",
+        help="Output format: json or csv. Inferred from --output extension if omitted.",
+    ),
+    output_dir: Path = typer.Option(
+        None,
+        "--output-dir",
+        help="Directory for auto-named timestamped result files.",
     ),
 ) -> None:
     """Run an evaluation dataset against its linked prompt."""
@@ -480,6 +511,28 @@ def eval_dataset(
         raise typer.Exit(1)
 
     _print_eval_result(result)
+
+    # --- Save results if requested ---
+    if output is not None or output_dir is not None:
+        from prompttest.core.exporter import auto_filename, save_result
+
+        fmt = output_format
+        if not fmt and output is not None:
+            fmt = output.suffix.lstrip(".")
+        if not fmt:
+            fmt = "json"
+        if fmt not in ("json", "csv"):
+            console.print(f"[red]Unknown format '{fmt}'. Use json or csv.[/red]")
+            raise typer.Exit(1)
+
+        if output is not None:
+            dest = output
+        else:
+            output_dir.mkdir(parents=True, exist_ok=True)
+            dest = output_dir / auto_filename(cfg, fmt)
+
+        saved_path = save_result(result, cfg, dest, fmt)
+        console.print(f"\n[green]Results saved to {saved_path}[/green]")
 
     if result.failed > 0 or result.errors > 0:
         raise typer.Exit(1)
