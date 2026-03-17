@@ -379,6 +379,16 @@ def eval_dataset(
         "--output-dir",
         help="Directory for auto-named timestamped result files.",
     ),
+    tags: str = typer.Option(
+        "",
+        "--tags",
+        help="Comma-separated tags to filter test cases (e.g. billing,critical).",
+    ),
+    match: str = typer.Option(
+        "any",
+        "--match",
+        help="Tag matching mode: 'any' (match at least one tag) or 'all' (match every tag).",
+    ),
 ) -> None:
     """Run an evaluation dataset against its linked prompt."""
     from prompttest.core.eval_runner import load_eval_dataset, run_eval, run_eval_async
@@ -403,6 +413,23 @@ def eval_dataset(
     # Override scorer if provided via CLI
     if scorer:
         ds.scoring = scorer
+
+    # --- Filter by tags ---
+    tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
+    if tag_list:
+        if match not in ("any", "all"):
+            console.print(f"[red]--match must be 'any' or 'all', got '{match}'[/red]")
+            raise typer.Exit(1)
+        from prompttest.core.eval_runner import filter_by_tags
+        original, filtered = filter_by_tags(ds, tag_list, match)
+        console.print(
+            f"Running [bold]{filtered}/{original}[/bold] tests "
+            f"(filtered by tags: [cyan]{', '.join(tag_list)}[/cyan]"
+            f" | match: [white]{match}[/white])\n"
+        )
+        if filtered == 0:
+            console.print("[yellow]No test cases match the given tags.[/yellow]")
+            raise typer.Exit(0)
 
     # Resolve prompt from registry
     registry = PromptRegistry.from_directory(prompts_dir)

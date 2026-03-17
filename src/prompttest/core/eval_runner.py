@@ -114,6 +114,38 @@ class EvalResult:
 
 
 # ---------------------------------------------------------------------------
+# Tag filtering
+# ---------------------------------------------------------------------------
+
+def filter_by_tags(
+    dataset: EvalDataset,
+    tags: list[str],
+    match: str = "any",
+) -> tuple[int, int]:
+    """Filter *dataset*.tests in-place, keeping only cases that match *tags*.
+
+    *match* is ``"any"`` (case has at least one of the tags) or ``"all"``
+    (case has every tag).
+
+    Returns ``(original_count, filtered_count)``.
+    """
+    if not tags:
+        n = len(dataset.tests)
+        return n, n
+
+    tag_set = set(tags)
+
+    if match == "all":
+        filtered = [c for c in dataset.tests if tag_set.issubset(c.tags)]
+    else:
+        filtered = [c for c in dataset.tests if tag_set.intersection(c.tags)]
+
+    original = len(dataset.tests)
+    dataset.tests = filtered
+    return original, len(filtered)
+
+
+# ---------------------------------------------------------------------------
 # Templating
 # ---------------------------------------------------------------------------
 
