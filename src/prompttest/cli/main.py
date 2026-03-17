@@ -297,6 +297,80 @@ def diff_prompts(
         console.print(f"\n[green]Diff saved to {output.resolve()}[/green]")
 
 
+@app.command("history")
+def history(
+    directory: Path = typer.Option(
+        Path("."),
+        "--dir",
+        "-d",
+        help="Project root containing .prompttest/",
+    ),
+    prompt_name: str = typer.Option(
+        "",
+        "--prompt",
+        "-p",
+        help="Filter history by prompt name.",
+    ),
+    limit: int = typer.Option(
+        20,
+        "--limit",
+        "-n",
+        help="Maximum number of entries to show.",
+    ),
+) -> None:
+    """Show evaluation run history with trend detection."""
+    from prompttest.core.history import detect_trend, load_history
+
+    root = directory.resolve() / PROMPTTEST_DIR
+    if not root.exists():
+        console.print("[red]No .prompttest/ directory found. Run 'prompttest init' first.[/red]")
+        raise typer.Exit(1)
+
+    name_filter = prompt_name if prompt_name else None
+    entries = load_history(root, prompt_name=name_filter)
+
+    if not entries:
+        console.print("[yellow]No history found.[/yellow]")
+        if name_filter:
+            console.print(f"[dim]Filtered by prompt: {name_filter}[/dim]")
+        raise typer.Exit(0)
+
+    # Show last N entries
+    shown = entries[-limit:]
+
+    console.print("[bold]Run History[/bold]\n")
+
+    table = Table(show_lines=False)
+    table.add_column("Date", style="cyan")
+    table.add_column("Prompt", style="white")
+    table.add_column("Version", style="green")
+    table.add_column("Model", style="white")
+    table.add_column("Score", justify="right")
+    table.add_column("Pass Rate", justify="right")
+    table.add_column("Total", justify="right", style="dim")
+
+    for e in shown:
+        ts_display = e.timestamp[:10]  # YYYY-MM-DD
+        score_color = "green" if e.average_score >= e.pass_threshold else "red"
+        table.add_row(
+            ts_display,
+            e.prompt_name,
+            f"v{e.prompt_version}",
+            e.model,
+            f"[{score_color}]{e.average_score:.2f}[/{score_color}]",
+            f"{e.accuracy:.0%}",
+            str(e.total),
+        )
+
+    console.print(table)
+
+    # Trend detection
+    trend = detect_trend(entries)
+    trend_icons = {"improving": "[green]improving[/green]", "degrading": "[red]degrading[/red]", "stable": "stable"}
+    console.print(f"\n  Trend: {trend_icons[trend]}")
+    console.print(f"  Entries: {len(entries)} total, showing last {len(shown)}")
+
+
 @app.command("eval")
 def eval_dataset(
     dataset_file: Path = typer.Argument(help="Path to an evaluation dataset YAML file."),
@@ -628,6 +702,10 @@ def eval_dataset(
 
         saved_path = save_result(result, cfg, dest, fmt)
         console.print(f"\n[green]Results saved to {saved_path}[/green]")
+
+    # --- Record to history ---
+    from prompttest.core.history import record as record_history
+    record_history(root, result, cfg)
 
     # --- Generate HTML report if requested ---
     if report is not None:
