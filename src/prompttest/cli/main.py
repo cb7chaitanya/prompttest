@@ -817,6 +817,11 @@ def eval_dataset(
         "--explain",
         help="Use an LLM to explain why failed test cases did not pass (requires OpenAI).",
     ),
+    fail_on_critical: bool = typer.Option(
+        False,
+        "--fail-on-critical",
+        help="Exit with code 1 if any critical (golden) test case fails.",
+    ),
 ) -> None:
     """Run an evaluation dataset against its linked prompt."""
     from prompttest.core.eval_runner import load_eval_dataset, run_eval, run_eval_async
@@ -1073,12 +1078,19 @@ def eval_dataset(
         exit_code = 1
     if baseline_regression:
         exit_code = 1
+    if fail_on_critical and result.critical_failed > 0:
+        console.print(
+            f"\n[red bold]Critical Failures: {result.critical_failed}[/red bold]"
+        )
+        exit_code = 1
     if exit_code:
         raise typer.Exit(exit_code)
 
 
 def _print_eval_result(result: object) -> None:
     """Pretty-print evaluation results."""
+    from prompttest.core.models import Verdict
+
     table = Table(
         title=f"Eval: {result.prompt_name} v{result.prompt_version}",
         show_lines=True,
@@ -1097,11 +1109,14 @@ def _print_eval_result(result: object) -> None:
             "fail": "[red]FAIL[/red]",
             "error": "[red bold]ERROR[/red bold]",
         }[cr.verdict.value]
+        if cr.case.critical and cr.verdict != Verdict.PASS:
+            verdict_style += " [red bold]*[/red bold]"
 
         score_str = f"{cr.score:.2f}" if cr.verdict.value != "error" else "-"
+        index_str = f"{i}{'*' if cr.case.critical else ''}"
 
         table.add_row(
-            str(i),
+            index_str,
             cr.case.input_summary[:80],
             cr.case.expected,
             cr.output[:80],
@@ -1124,6 +1139,15 @@ def _print_eval_result(result: object) -> None:
     avg_color = "green" if avg >= result.pass_threshold else "red"
     console.print(f"  Average Score:  [{avg_color}]{avg:.2f}[/{avg_color}]")
     console.print(f"  Pass Threshold: {result.pass_threshold:.2f}")
+
+    if result.critical_total > 0:
+        console.print()
+        cf = result.critical_failed
+        ct = result.critical_total
+        crit_color = "red bold" if cf > 0 else "green"
+        console.print(f"  Critical Tests: [{crit_color}]{ct - cf}/{ct} passing[/{crit_color}]")
+        if cf > 0:
+            console.print(f"  [red bold]Critical Failures: {cf}[/red bold]")
 
 
 def _print_baseline_comparison(cmp: object) -> None:

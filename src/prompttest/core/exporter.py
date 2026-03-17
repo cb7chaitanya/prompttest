@@ -31,6 +31,7 @@ def _build_payload(
             "passed": cr.verdict == Verdict.PASS,
             "verdict": cr.verdict.value,
             "reason": cr.reason,
+            "critical": cr.case.critical,
         })
 
     return {
@@ -50,6 +51,8 @@ def _build_payload(
             "accuracy": result.accuracy,
             "average_score": result.average_score,
             "pass_threshold": result.pass_threshold,
+            "critical_total": result.critical_total,
+            "critical_failed": result.critical_failed,
         },
         "results": cases,
     }

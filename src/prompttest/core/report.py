@@ -47,6 +47,8 @@ _TEMPLATE = """\
   td { padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); vertical-align: top; }
   tr.row-fail { background: #fef2f2; }
   tr.row-error { background: #fef2f2; }
+  tr.critical-fail { background: #fecaca; border-left: 3px solid var(--red); }
+  .critical-badge { background: #dc2626; color: #fff; font-size: 0.6rem; padding: 0.1rem 0.35rem; border-radius: 4px; margin-left: 4px; vertical-align: middle; }
   .badge { display: inline-block; padding: 0.125rem 0.5rem; border-radius: 9999px; font-size: 0.7rem; font-weight: 600; }
   .badge-pass { background: #dcfce7; color: #166534; }
   .badge-fail { background: #fee2e2; color: #991b1b; }
@@ -127,8 +129,8 @@ _TEMPLATE = """\
   </thead>
   <tbody>
     {% for r in results %}
-    <tr class="row-{{ r.verdict }}">
-      <td>{{ r.index }}</td>
+    <tr class="{{ r.row_class }}">
+      <td>{{ r.index }}{% if r.critical %}<span class="critical-badge">CRITICAL</span>{% endif %}</td>
       <td class="truncate" title="{{ r.input_escaped }}">{{ r.input_display }}</td>
       <td class="truncate" title="{{ r.expected_escaped }}">{{ r.expected_display }}</td>
       <td class="truncate" title="{{ r.actual_escaped }}">{{ r.actual_display }}</td>
@@ -234,6 +236,11 @@ def export_html(
     for i, cr in enumerate(result.case_results, 1):
         input_str = ", ".join(f"{k}={v!r}" for k, v in cr.case.input.items())
         scores.append(cr.score)
+        is_critical_fail = cr.case.critical and cr.verdict != Verdict.PASS
+        row_class = f"row-{cr.verdict.value}"
+        if is_critical_fail:
+            row_class = "critical-fail"
+
         rows.append({
             "index": i,
             "input_display": html.escape(_truncate(input_str)),
@@ -247,6 +254,8 @@ def export_html(
             "verdict": cr.verdict.value,
             "reason_display": html.escape(_truncate(cr.reason)),
             "reason_escaped": html.escape(cr.reason),
+            "critical": cr.case.critical,
+            "row_class": row_class,
         })
 
     score_buckets = _build_score_buckets(scores)

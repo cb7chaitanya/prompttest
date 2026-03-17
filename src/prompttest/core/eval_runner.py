@@ -28,6 +28,7 @@ class EvalCase:
     input: dict[str, str]
     expected: str
     tags: list[str] = field(default_factory=list)
+    critical: bool = False
 
     @property
     def input_summary(self) -> str:
@@ -67,6 +68,7 @@ class EvalDataset:
                     input=inp,
                     expected=t["expected"],
                     tags=t.get("tags", []),
+                    critical=bool(t.get("critical", False)),
                 )
             )
         return cls(
@@ -111,6 +113,19 @@ class EvalResult:
         """Mean score across all non-error cases (0.0 if none)."""
         scored = [r.score for r in self.case_results if r.verdict != Verdict.ERROR]
         return sum(scored) / len(scored) if scored else 0.0
+
+    @property
+    def critical_total(self) -> int:
+        """Number of test cases marked as critical."""
+        return sum(1 for r in self.case_results if r.case.critical)
+
+    @property
+    def critical_failed(self) -> int:
+        """Number of critical test cases that failed or errored."""
+        return sum(
+            1 for r in self.case_results
+            if r.case.critical and r.verdict != Verdict.PASS
+        )
 
 
 # ---------------------------------------------------------------------------
