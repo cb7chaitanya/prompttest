@@ -57,13 +57,14 @@ class Dataset:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Dataset:
+        raw_cases = data.get("cases", data.get("tests", []))
         cases = [
             TestCase(
                 input=c["input"],
                 expected=c["expected"],
                 tags=c.get("tags", []),
             )
-            for c in data["cases"]
+            for c in raw_cases
         ]
         return cls(name=data["name"], prompt=data["prompt"], cases=cases)
 

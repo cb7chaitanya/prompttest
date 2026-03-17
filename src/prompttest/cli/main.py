@@ -42,7 +42,7 @@ parameters:
 EXAMPLE_DATASET = """\
 name: summarize-basics
 prompt: summarize
-cases:
+tests:
   - input: "The quick brown fox jumps over the lazy dog. The dog did not react."
     expected: "fox"
     tags: [smoke]

@@ -59,7 +59,7 @@ class EvalDataset:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> EvalDataset:
         tests = []
-        for t in data["tests"]:
+        for t in data.get("tests", data.get("cases", [])):
             inp = t["input"]
             if isinstance(inp, str):
                 inp = {"input": inp}
