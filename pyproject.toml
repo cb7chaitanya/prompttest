@@ -20,7 +20,8 @@ dependencies = [
 openai = ["openai>=1.0"]
 anthropic = ["anthropic>=0.39.0"]
 fuzzy = ["rapidfuzz>=3.0"]
-dev = ["pytest>=7.0", "ruff>=0.4.0"]
+report = ["jinja2>=3.1"]
+dev = ["pytest>=7.0", "ruff>=0.4.0", "jinja2>=3.1"]
 
 [project.scripts]
 prompttest = "prompttest.cli.main:app"

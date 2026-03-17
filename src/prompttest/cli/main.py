@@ -404,6 +404,11 @@ def eval_dataset(
         "--baseline",
         help="Path to a baseline results JSON file to compare against.",
     ),
+    report: Path = typer.Option(
+        None,
+        "--report",
+        help="Generate an HTML report (e.g. --report report.html).",
+    ),
 ) -> None:
     """Run an evaluation dataset against its linked prompt."""
     from prompttest.core.eval_runner import load_eval_dataset, run_eval, run_eval_async
@@ -623,6 +628,13 @@ def eval_dataset(
 
         saved_path = save_result(result, cfg, dest, fmt)
         console.print(f"\n[green]Results saved to {saved_path}[/green]")
+
+    # --- Generate HTML report if requested ---
+    if report is not None:
+        from prompttest.core.report import save_html_report
+
+        report_path = save_html_report(result, cfg, report)
+        console.print(f"\n[green]HTML report saved to {report_path}[/green]")
 
     exit_code = 0
     if result.failed > 0 or result.errors > 0:
