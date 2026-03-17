@@ -399,6 +399,11 @@ def eval_dataset(
         "--fail-on-threshold",
         help="Exit with code 1 if average score is below the pass threshold (useful for CI).",
     ),
+    baseline: Path = typer.Option(
+        None,
+        "--baseline",
+        help="Path to a baseline results JSON file to compare against.",
+    ),
 ) -> None:
     """Run an evaluation dataset against its linked prompt."""
     from prompttest.core.eval_runner import load_eval_dataset, run_eval, run_eval_async
@@ -576,6 +581,27 @@ def eval_dataset(
 
     _print_eval_result(result)
 
+    # --- Baseline comparison ---
+    baseline_regression = False
+    if baseline is not None:
+        from prompttest.core.baseline import compare, load_baseline
+
+        baseline_path = baseline.resolve()
+        if not baseline_path.exists():
+            console.print(f"[red]Baseline file not found: {baseline_path}[/red]")
+            raise typer.Exit(1)
+
+        try:
+            baseline_data = load_baseline(baseline_path)
+        except (json.JSONDecodeError, ValueError) as exc:
+            console.print(f"[red]Error reading baseline: {exc}[/red]")
+            raise typer.Exit(1)
+
+        cmp = compare(baseline_data, result)
+        _print_baseline_comparison(cmp)
+        if cmp.has_regression:
+            baseline_regression = True
+
     # --- Save results if requested ---
     if output is not None or output_dir is not None:
         from prompttest.core.exporter import auto_filename, save_result
@@ -606,6 +632,8 @@ def eval_dataset(
             f"\n[red]Average score {result.average_score:.2f} is below "
             f"threshold {pass_threshold:.2f}[/red]"
         )
+        exit_code = 1
+    if baseline_regression:
         exit_code = 1
     if exit_code:
         raise typer.Exit(exit_code)
@@ -658,6 +686,50 @@ def _print_eval_result(result: object) -> None:
     avg_color = "green" if avg >= result.pass_threshold else "red"
     console.print(f"  Average Score:  [{avg_color}]{avg:.2f}[/{avg_color}]")
     console.print(f"  Pass Threshold: {result.pass_threshold:.2f}")
+
+
+def _print_baseline_comparison(cmp: object) -> None:
+    """Pretty-print baseline comparison results."""
+    console.print()
+    console.print("[bold]Baseline Comparison[/bold]")
+
+    def _delta_str(delta: float, fmt: str = ".2f") -> str:
+        sign = "+" if delta >= 0 else ""
+        color = "green" if delta >= 0 else "red"
+        return f"[{color}]{sign}{delta:{fmt}}[/{color}]"
+
+    console.print(f"  Baseline score: {cmp.baseline_avg:.2f}")
+    console.print(f"  Current score:  {cmp.current_avg:.2f}")
+    console.print(f"  Change:         {_delta_str(cmp.avg_delta)}")
+    console.print()
+    console.print(f"  Baseline pass rate: {cmp.baseline_pass_rate:.0%}")
+    console.print(f"  Current pass rate:  {cmp.current_pass_rate:.0%}")
+    console.print(f"  Change:             {_delta_str(cmp.pass_rate_delta, '.0%')}")
+
+    if cmp.regressions:
+        console.print()
+        console.print(f"[red bold]Regressions ({len(cmp.regressions)}):[/red bold]")
+        for d in cmp.regressions:
+            console.print(
+                f"  #{d.index} {d.input_summary[:40]}"
+                f"  {d.baseline_score:.2f} -> {d.current_score:.2f}"
+                f"  [red]({d.delta:+.2f})[/red]"
+            )
+
+    if cmp.improvements:
+        console.print()
+        console.print(f"[green bold]Improvements ({len(cmp.improvements)}):[/green bold]")
+        for d in cmp.improvements:
+            console.print(
+                f"  #{d.index} {d.input_summary[:40]}"
+                f"  {d.baseline_score:.2f} -> {d.current_score:.2f}"
+                f"  [green]({d.delta:+.2f})[/green]"
+            )
+
+    if cmp.has_regression:
+        console.print(
+            "\n[red bold]Regression detected — current results are worse than baseline.[/red bold]"
+        )
 
 
 def _parse_prompt_identifier(identifier: str) -> tuple[str, str | None]:
