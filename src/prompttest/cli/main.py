@@ -483,6 +483,11 @@ def eval_dataset(
         "--report",
         help="Generate an HTML report (e.g. --report report.html).",
     ),
+    explain: bool = typer.Option(
+        False,
+        "--explain",
+        help="Use an LLM to explain why failed test cases did not pass (requires OpenAI).",
+    ),
 ) -> None:
     """Run an evaluation dataset against its linked prompt."""
     from prompttest.core.eval_runner import load_eval_dataset, run_eval, run_eval_async
@@ -659,6 +664,20 @@ def eval_dataset(
         raise typer.Exit(1)
 
     _print_eval_result(result)
+
+    # --- Explain failures ---
+    if explain and (result.failed > 0 or result.errors > 0):
+        from prompttest.core.explainer import explain_failures
+
+        console.print("\n[bold]Failure Explanations[/bold]\n")
+        explanations = explain_failures(result)
+        for exp in explanations:
+            console.print(f"[bold red]Test #{exp.index}[/bold red]")
+            console.print(f"  Expected: [yellow]{exp.expected}[/yellow]")
+            console.print(f"  Actual:   [white]{exp.actual}[/white]")
+            console.print(f"  Score:    {exp.score:.2f}")
+            console.print(f"\n  [dim]Explanation:[/dim]")
+            console.print(f"  {exp.explanation}\n")
 
     # --- Baseline comparison ---
     baseline_regression = False
