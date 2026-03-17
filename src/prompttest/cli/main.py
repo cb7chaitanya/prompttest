@@ -389,6 +389,11 @@ def eval_dataset(
         "--match",
         help="Tag matching mode: 'any' (match at least one tag) or 'all' (match every tag).",
     ),
+    skip_key_check: bool = typer.Option(
+        False,
+        "--skip-key-check",
+        help="Skip API key validation before evaluation.",
+    ),
 ) -> None:
     """Run an evaluation dataset against its linked prompt."""
     from prompttest.core.eval_runner import load_eval_dataset, run_eval, run_eval_async
@@ -463,6 +468,20 @@ def eval_dataset(
 
     if provider or model:
         provider_override = get_prov(cfg.provider)
+
+    # --- Validate API key ---
+    if not skip_key_check:
+        from prompttest.providers.key_validator import validate_provider_key
+
+        key_result = validate_provider_key(cfg.provider)
+        if key_result is not None and not key_result.present:
+            console.print("[bold red]Missing API Key[/bold red]\n")
+            console.print(f"  Provider: [cyan]{key_result.provider}[/cyan]")
+            console.print(f"  Env var:  [yellow]{key_result.env_var}[/yellow]\n")
+            console.print(
+                f"Set the environment variable or use [bold]--skip-key-check[/bold] to skip.\n"
+            )
+            raise typer.Exit(1)
 
     # --- Validate prompt template against dataset before running ---
     from prompttest.validation.prompt_validator import ValidationError, validate_dataset
