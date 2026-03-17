@@ -42,7 +42,7 @@ class PromptConfig:
 class TestCase:
     """A single input/expected-output pair from a dataset."""
 
-    input: str
+    input: str | dict
     expected: str
     tags: list[str] = field(default_factory=list)
 
@@ -66,7 +66,7 @@ class Dataset:
             )
             for c in raw_cases
         ]
-        return cls(name=data["name"], prompt=data["prompt"], cases=cases)
+        return cls(name=data.get("name", data.get("prompt", "unnamed")), prompt=data["prompt"], cases=cases)
 
 
 @dataclass

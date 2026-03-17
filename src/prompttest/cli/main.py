@@ -245,7 +245,7 @@ def run(
             }[cr.verdict.value]
 
             table.add_row(
-                cr.case.input[:80],
+                str(cr.case.input)[:80],
                 cr.case.expected,
                 cr.output[:80],
                 verdict_style,

@@ -10,8 +10,17 @@ from prompttest.core.scoring import PASS_THRESHOLD, contains
 from prompttest.providers.registry import get_provider
 
 
-def render_template(template: str, input_text: str) -> str:
-    """Replace {{input}} placeholder in the prompt template."""
+def render_template(template: str, input_text: str | dict) -> str:
+    """Replace placeholders in the prompt template.
+
+    Supports both a plain string (replaces ``{{input}}``) and a dict
+    (replaces each ``{{key}}`` with its value).
+    """
+    if isinstance(input_text, dict):
+        result = template
+        for key, value in input_text.items():
+            result = result.replace("{{" + key + "}}", str(value))
+        return result
     return template.replace("{{input}}", input_text)
 
 
