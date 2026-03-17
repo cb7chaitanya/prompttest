@@ -394,6 +394,11 @@ def eval_dataset(
         "--skip-key-check",
         help="Skip API key validation before evaluation.",
     ),
+    fail_on_threshold: bool = typer.Option(
+        False,
+        "--fail-on-threshold",
+        help="Exit with code 1 if average score is below the pass threshold (useful for CI).",
+    ),
 ) -> None:
     """Run an evaluation dataset against its linked prompt."""
     from prompttest.core.eval_runner import load_eval_dataset, run_eval, run_eval_async
@@ -593,8 +598,17 @@ def eval_dataset(
         saved_path = save_result(result, cfg, dest, fmt)
         console.print(f"\n[green]Results saved to {saved_path}[/green]")
 
+    exit_code = 0
     if result.failed > 0 or result.errors > 0:
-        raise typer.Exit(1)
+        exit_code = 1
+    if fail_on_threshold and result.average_score < pass_threshold:
+        console.print(
+            f"\n[red]Average score {result.average_score:.2f} is below "
+            f"threshold {pass_threshold:.2f}[/red]"
+        )
+        exit_code = 1
+    if exit_code:
+        raise typer.Exit(exit_code)
 
 
 def _print_eval_result(result: object) -> None:

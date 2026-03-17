@@ -176,6 +176,71 @@ prompttest eval dataset.yaml --output-dir ./results
 # → ./results/support_v1_20260317T120000Z.json
 ```
 
+## Using prompttest in CI/CD
+
+prompttest is designed for CI pipelines. The `eval` command exits with a non-zero status code when tests fail, and `--fail-on-threshold` adds average-score gating.
+
+### Exit codes
+
+| Condition | Exit code |
+|---|---|
+| All tests pass | 0 |
+| Any test case fails or errors | 1 |
+| `--fail-on-threshold` and average score < threshold | 1 |
+
+### GitHub Actions
+
+An example workflow is included at `.github/workflows/prompt-eval.yml`:
+
+```yaml
+name: Prompt Evaluation
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths:
+      - ".prompttest/**"
+      - "src/**"
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install prompttest
+        run: pip install -e ".[openai,dev]"
+
+      - name: Run prompt evaluation
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          prompttest eval .prompttest/datasets/summarize-basics.yaml \
+            --pass-threshold 0.7 \
+            --fail-on-threshold \
+            --output results.json
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results
+          path: results.json
+```
+
+### Tips for CI
+
+- Use `--fail-on-threshold` to gate on average score, not just individual failures.
+- Use `--output results.json` to save artifacts for debugging failed runs.
+- Use `--tags critical` to run only high-priority tests on every PR.
+- Use `--skip-key-check` if key presence is validated elsewhere.
+- Set `--pass-threshold` per environment (e.g. stricter in production).
+
 ## Development
 
 ```bash
