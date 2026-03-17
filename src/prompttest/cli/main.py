@@ -315,6 +315,11 @@ def eval_dataset(
         "--async",
         help="Run evaluation cases concurrently.",
     ),
+    strict: bool = typer.Option(
+        True,
+        "--strict/--no-strict",
+        help="Strict validation: fail on missing placeholders (default: strict).",
+    ),
 ) -> None:
     """Run an evaluation dataset against its linked prompt."""
     from prompttest.core.eval_runner import load_eval_dataset, run_eval, run_eval_async
@@ -373,6 +378,26 @@ def eval_dataset(
     if provider or model:
         provider_override = get_prov(cfg.provider)
 
+    # --- Validate prompt template against dataset before running ---
+    from prompttest.validation.prompt_validator import ValidationError, validate_dataset
+
+    validation = validate_dataset(cfg, ds)
+
+    if validation.warnings:
+        for w in validation.warnings:
+            console.print(f"[yellow]Warning: {w.message}[/yellow]")
+        console.print()
+
+    if validation.errors:
+        console.print("[bold red]Validation Error[/bold red]\n")
+        for err in validation.errors:
+            console.print(f'[red]Missing placeholder: {", ".join(f"{f!r}" for f in err.missing)}[/red]')
+            console.print(f"[red]In test case #{err.case_index}[/red]\n")
+        if strict:
+            raise typer.Exit(1)
+        else:
+            console.print("[yellow]Continuing with --no-strict mode...[/yellow]\n")
+
     console.print(
         f"[bold]Evaluating[/bold] prompt [cyan]{cfg.name}[/cyan] "
         f"[green]v{cfg.version}[/green] "
@@ -384,9 +409,9 @@ def eval_dataset(
     try:
         if use_async:
             import asyncio
-            result = asyncio.run(run_eval_async(dataset_path, cfg, provider_override))
+            result = asyncio.run(run_eval_async(dataset_path, cfg, provider_override, strict=False))
         else:
-            result = run_eval(dataset_path, cfg, provider_override)
+            result = run_eval(dataset_path, cfg, provider_override, strict=False)
     except KeyError as exc:
         console.print(f"[red]{exc}[/red]")
         console.print(f"Available scorers: {', '.join(list_scorers())}")

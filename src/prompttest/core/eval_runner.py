@@ -151,9 +151,24 @@ def run_eval(
     dataset_path: Path,
     prompt_config: PromptConfig,
     provider_override: LLMProvider | None = None,
+    *,
+    strict: bool = True,
 ) -> EvalResult:
-    """Run an evaluation dataset against a prompt and return scored results."""
+    """Run an evaluation dataset against a prompt and return scored results.
+
+    When *strict* is ``True`` (default), a :class:`~prompttest.validation.prompt_validator.ValidationError`
+    is raised if any test case is missing required placeholders.  When ``False``,
+    missing placeholders are silently skipped and only warnings are emitted.
+    """
+    from prompttest.validation.prompt_validator import validate_dataset
+
     dataset = load_eval_dataset(dataset_path)
+
+    # --- Validate before running ---
+    validation = validate_dataset(prompt_config, dataset)
+    if validation.errors and strict:
+        raise validation.errors[0]
+
     scorer = get_scorer(dataset.scoring)
     provider = provider_override or get_provider(prompt_config.provider)
 
@@ -183,9 +198,19 @@ async def run_eval_async(
     dataset_path: Path,
     prompt_config: PromptConfig,
     provider_override: LLMProvider | None = None,
+    *,
+    strict: bool = True,
 ) -> EvalResult:
     """Async version of :func:`run_eval` — runs all cases concurrently."""
+    from prompttest.validation.prompt_validator import validate_dataset
+
     dataset = load_eval_dataset(dataset_path)
+
+    # --- Validate before running ---
+    validation = validate_dataset(prompt_config, dataset)
+    if validation.errors and strict:
+        raise validation.errors[0]
+
     scorer = get_scorer(dataset.scoring)
     provider = provider_override or get_provider(prompt_config.provider)
 
