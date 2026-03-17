@@ -87,6 +87,120 @@ def init(
     console.print("\nRun [bold]prompttest run[/bold] to execute tests.")
 
 
+@app.command("generate")
+def generate(
+    output_file: Path = typer.Argument(help="Output path for the generated dataset YAML."),
+    prompt_id: str = typer.Option(
+        ...,
+        "--prompt",
+        "-p",
+        help="Prompt identifier to generate tests for (e.g. 'support' or 'support_v1').",
+    ),
+    gen_type: str = typer.Option(
+        "domain",
+        "--type",
+        help="Generation type: edge, adversarial, paraphrase, or domain.",
+    ),
+    size: int = typer.Option(
+        10,
+        "--size",
+        "-n",
+        help="Number of test cases to generate.",
+        min=1,
+        max=500,
+    ),
+    gen_scorer: str = typer.Option(
+        "contains",
+        "--scorer",
+        "-s",
+        help="Scoring function for the generated dataset.",
+    ),
+    gen_model: str = typer.Option(
+        "",
+        "--model",
+        "-m",
+        help="Model to use for generation (default: gpt-4o-mini).",
+    ),
+    directory: Path = typer.Option(
+        Path("."),
+        "--dir",
+        "-d",
+        help="Project root containing .prompttest/",
+    ),
+) -> None:
+    """Generate evaluation datasets using an LLM."""
+    from prompttest.core.generator import (
+        build_dataset_yaml,
+        generate_cases,
+        list_generation_types,
+    )
+    from prompttest.core.registry import PromptRegistry
+    from prompttest.validation.prompt_validator import extract_placeholders
+
+    if gen_type not in list_generation_types():
+        console.print(
+            f"[red]Unknown type '{gen_type}'. "
+            f"Available: {', '.join(list_generation_types())}[/red]"
+        )
+        raise typer.Exit(1)
+
+    root = directory.resolve() / PROMPTTEST_DIR
+    prompts_dir = root / "prompts"
+    if not prompts_dir.exists():
+        console.print("[red]No prompts/ directory found. Run 'prompttest init' first.[/red]")
+        raise typer.Exit(1)
+
+    registry = PromptRegistry.from_directory(prompts_dir)
+    name, version = _parse_prompt_identifier(prompt_id)
+    entry = registry.get(name, version)
+    if entry is None:
+        console.print(f"[red]Prompt '{prompt_id}' not found in registry.[/red]")
+        available = registry.names
+        if available:
+            console.print(f"Available: {', '.join(available)}")
+        raise typer.Exit(1)
+
+    cfg = entry.config
+    input_keys = sorted(extract_placeholders(cfg.template))
+    if not input_keys:
+        console.print("[yellow]Warning: prompt template has no placeholders.[/yellow]")
+
+    prompt_ref = f"{cfg.name}_v{cfg.version}"
+
+    console.print(
+        f"[bold]Generating[/bold] [cyan]{size}[/cyan] test cases "
+        f"| type [yellow]{gen_type}[/yellow] "
+        f"| prompt [cyan]{cfg.name}[/cyan] [green]v{cfg.version}[/green]\n"
+    )
+
+    try:
+        cases = generate_cases(
+            prompt_name=cfg.name,
+            system_prompt=cfg.system,
+            template=cfg.template,
+            input_keys=input_keys,
+            gen_type=gen_type,
+            size=size,
+            model=gen_model or None,
+        )
+    except (ImportError, ValueError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1)
+    except Exception as exc:
+        console.print(f"[red]Generation failed: {exc}[/red]")
+        raise typer.Exit(1)
+
+    yaml_content = build_dataset_yaml(prompt_ref, cases, scoring=gen_scorer)
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    output_file.write_text(yaml_content)
+
+    console.print(f"[green]Generated {len(cases)} test cases → {output_file.resolve()}[/green]")
+    console.print(f"  Prompt: {prompt_ref}")
+    console.print(f"  Type:   {gen_type}")
+    console.print(f"  Scorer: {gen_scorer}")
+    console.print(f"\nRun: [bold]prompttest eval {output_file}[/bold]")
+
+
 @app.command()
 def run(
     directory: Path = typer.Option(
