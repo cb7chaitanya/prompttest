@@ -322,7 +322,15 @@ def eval_dataset(
         "",
         "--scorer",
         "-s",
-        help="Override the scoring function (e.g. exact, contains, starts_with, ends_with).",
+        help="Override the scoring function (e.g. exact, contains, fuzzy, semantic, llm_judge).",
+    ),
+    pass_threshold: float = typer.Option(
+        0.7,
+        "--pass-threshold",
+        "-t",
+        help="Minimum score for a test case to pass (0.0-1.0).",
+        min=0.0,
+        max=1.0,
     ),
     use_async: bool = typer.Option(
         False,
@@ -455,6 +463,7 @@ def eval_dataset(
         f"| model [white]{cfg.model}[/white] "
         f"| provider [yellow]{cfg.provider}[/yellow] "
         f"| scorer [yellow]{ds.scoring}[/yellow]"
+        f" | threshold [white]{pass_threshold}[/white]"
     )
     if use_async:
         eval_header += (
@@ -496,12 +505,16 @@ def eval_dataset(
                         cfg,
                         provider_override,
                         strict=False,
+                        pass_threshold=pass_threshold,
                         concurrency_config=cc,
                         on_case_complete=_advance,
                     )
                 )
         else:
-            result = run_eval(dataset_path, cfg, provider_override, strict=False)
+            result = run_eval(
+                dataset_path, cfg, provider_override,
+                strict=False, pass_threshold=pass_threshold,
+            )
     except KeyError as exc:
         console.print(f"[red]{exc}[/red]")
         console.print(f"Available scorers: {', '.join(list_scorers())}")
@@ -548,6 +561,7 @@ def _print_eval_result(result: object) -> None:
     table.add_column("Input", style="cyan", max_width=40)
     table.add_column("Expected", style="yellow", max_width=25)
     table.add_column("Output", style="white", max_width=40)
+    table.add_column("Score", justify="right")
     table.add_column("Verdict", justify="center")
     table.add_column("Reason", style="dim", max_width=30)
 
@@ -558,11 +572,14 @@ def _print_eval_result(result: object) -> None:
             "error": "[red bold]ERROR[/red bold]",
         }[cr.verdict.value]
 
+        score_str = f"{cr.score:.2f}" if cr.verdict.value != "error" else "-"
+
         table.add_row(
             str(i),
             cr.case.input_summary[:80],
             cr.case.expected,
             cr.output[:80],
+            score_str,
             verdict_style,
             cr.reason,
         )
@@ -576,6 +593,11 @@ def _print_eval_result(result: object) -> None:
     if result.errors:
         console.print(f"  Errors:   [red bold]{result.errors}[/red bold]")
     console.print(f"  Accuracy: {result.accuracy:.0%}")
+    console.print()
+    avg = result.average_score
+    avg_color = "green" if avg >= result.pass_threshold else "red"
+    console.print(f"  Average Score:  [{avg_color}]{avg:.2f}[/{avg_color}]")
+    console.print(f"  Pass Threshold: {result.pass_threshold:.2f}")
 
 
 def _parse_prompt_identifier(identifier: str) -> tuple[str, str | None]:

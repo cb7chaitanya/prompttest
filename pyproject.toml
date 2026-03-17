@@ -19,6 +19,7 @@ dependencies = [
 [project.optional-dependencies]
 openai = ["openai>=1.0"]
 anthropic = ["anthropic>=0.39.0"]
+fuzzy = ["rapidfuzz>=3.0"]
 dev = ["pytest>=7.0", "ruff>=0.4.0"]
 
 [project.scripts]

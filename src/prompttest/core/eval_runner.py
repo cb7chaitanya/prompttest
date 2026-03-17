@@ -84,6 +84,7 @@ class EvalResult:
     prompt_version: str
     scoring: str
     case_results: list[EvalCaseResult]
+    pass_threshold: float = PASS_THRESHOLD
 
     @property
     def total(self) -> int:
@@ -104,6 +105,12 @@ class EvalResult:
     @property
     def accuracy(self) -> float:
         return self.passed / self.total if self.total else 0.0
+
+    @property
+    def average_score(self) -> float:
+        """Mean score across all non-error cases (0.0 if none)."""
+        scored = [r.score for r in self.case_results if r.verdict != Verdict.ERROR]
+        return sum(scored) / len(scored) if scored else 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -136,9 +143,10 @@ def _score_case(
     case: EvalCase,
     output: str,
     scorer: Any,
+    pass_threshold: float = PASS_THRESHOLD,
 ) -> EvalCaseResult:
     score, reason = scorer(output, case.expected)
-    verdict = Verdict.PASS if score >= PASS_THRESHOLD else Verdict.FAIL
+    verdict = Verdict.PASS if score >= pass_threshold else Verdict.FAIL
     return EvalCaseResult(case=case, output=output, verdict=verdict, score=score, reason=reason)
 
 
@@ -155,12 +163,15 @@ def run_eval(
     provider_override: LLMProvider | None = None,
     *,
     strict: bool = True,
+    pass_threshold: float = PASS_THRESHOLD,
 ) -> EvalResult:
     """Run an evaluation dataset against a prompt and return scored results.
 
     When *strict* is ``True`` (default), a :class:`~prompttest.validation.prompt_validator.ValidationError`
     is raised if any test case is missing required placeholders.  When ``False``,
     missing placeholders are silently skipped and only warnings are emitted.
+
+    *pass_threshold* sets the minimum score for a case to be considered passing.
     """
     from prompttest.validation.prompt_validator import validate_dataset
 
@@ -184,7 +195,7 @@ def run_eval(
                 user_message=user_message,
                 parameters=prompt_config.parameters,
             )
-            case_results.append(_score_case(case, output, scorer))
+            case_results.append(_score_case(case, output, scorer, pass_threshold))
         except Exception as exc:
             case_results.append(_error_case(case, exc))
 
@@ -193,6 +204,7 @@ def run_eval(
         prompt_version=prompt_config.version,
         scoring=dataset.scoring,
         case_results=case_results,
+        pass_threshold=pass_threshold,
     )
 
 
@@ -202,10 +214,13 @@ async def run_eval_async(
     provider_override: LLMProvider | None = None,
     *,
     strict: bool = True,
+    pass_threshold: float = PASS_THRESHOLD,
     concurrency_config: ConcurrencyConfig | None = None,
     on_case_complete: Callable[[], None] | None = None,
 ) -> EvalResult:
     """Async version of :func:`run_eval` — runs cases with concurrency control.
+
+    *pass_threshold* sets the minimum score for a case to be considered passing.
 
     *concurrency_config* controls parallelism, rate limiting, and retries.
     When ``None`` a default config is used (10 concurrent, no rate limit,
@@ -235,7 +250,7 @@ async def run_eval_async(
                 user_message=user_message,
                 parameters=prompt_config.parameters,
             )
-            return _score_case(case, output, scorer)
+            return _score_case(case, output, scorer, pass_threshold)
         return _run
 
     # Run with concurrency control; catch per-task errors as ERROR verdicts
@@ -268,4 +283,5 @@ async def run_eval_async(
         prompt_version=prompt_config.version,
         scoring=dataset.scoring,
         case_results=list(case_results),
+        pass_threshold=pass_threshold,
     )

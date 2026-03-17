@@ -48,6 +48,8 @@ def _build_payload(
             "failed": result.failed,
             "errors": result.errors,
             "accuracy": result.accuracy,
+            "average_score": result.average_score,
+            "pass_threshold": result.pass_threshold,
         },
         "results": cases,
     }
